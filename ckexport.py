@@ -1,7 +1,9 @@
 #!/usr/bin/python
+import argparse
 import sqlite3
 import csv
 from datetime import datetime
+import os
 
 
 def dict_factory(cursor, row):
@@ -11,25 +13,46 @@ def dict_factory(cursor, row):
     return d
 
 
-def export_csv(data, path):
-    data = list(data)
-    if not data:
-        return
-    fields = data[0].keys()
-    with open(path, 'wb') as f:
-        writer = csv.DictWriter(f, fields)
-        for row in data:
-            for k,v in row.items():
-                v = unicode(v)
-                row[k] = v.encode('utf-8')
-            writer.writerow(row)
+class ExporterDoesNotExist(Exception):
+    pass
+
+
+class Exporter(object):
+    def export(self, data, path):
+        exporter = self.get_exporter(path)
+        return exporter(data, path)
+
+    def get_exporter(self, path):
+        filename, file_extension = os.path.splitext(path)
+        file_extension = file_extension.lower().replace('.', '')
+        exporter = getattr(self, 'export_{0}'.format(file_extension), None)
+        if not exporter:
+            raise ExporterDoesNotExist('Exporter {0} does not exist'.format(file_extension))
+        return exporter
+
+    def export_csv(self, data, path):
+        if not data:
+            return
+        fields = data[0].keys()
+        with open(path, 'wb') as f:
+            writer = csv.DictWriter(f, fields)
+            for row in data:
+                for k,v in row.items():
+                    if isinstance(v, unicode):
+                        row[k] = v.encode('utf8')
+                writer.writerow(row)
 
 
 class CoinKeeper(object):
-    def __init__(self, db_path='CoinKeeper2.db3'):
+    def __init__(self, db_path, exporter=None):
+        assert db_path
         self.connection = sqlite3.connect(db_path)
         self.connection.row_factory = dict_factory
         self.cursor = self.connection.cursor()
+        if exporter:
+            self.exporter = exporter
+        else:
+            self.exporter = Exporter
 
     def get_transactions(self, fields=['Note', 'Name', 'DefaultAmount', 'Icon', 'Date'], order_by='date'):
         fields = ','.join(fields)
@@ -46,15 +69,30 @@ class CoinKeeper(object):
             ORDER BY
                 {order_by}
         """.format(**locals())
-        return self.cursor.execute(sql)
+        return list(self.cursor.execute(sql))
 
-    def export(self, data, path=None, exporter=export_csv):
+    def export(self, data, path=None):
         if not path:
-            path = datetime.now().strftime('%Y-%m-%d')
-        exporter(data, path)
+            path = datetime.now().strftime('%Y-%m-%d.csv')
+        exporter = self.exporter()
+        exporter.export(data, path)
 
 
 if __name__ == '__main__':
-    ck = CoinKeeper()
-    data = ck.get_transactions()
-    ck.export(data)
+    parser = argparse.ArgumentParser(description='Coin keeper (http://coinkeeper.me/) database export tool')
+    parser.add_argument('-d', '--db', type=str, help='database path', default='CoinKeeper2.db3')
+    parser.add_argument('-f', '--fields', type=str, help='fields from database to be extracted', nargs='*')
+    parser.add_argument('-t', '--target', type=str, help='target file(s)', nargs='*', default=None)
+    args = parser.parse_args()
+
+    ck = CoinKeeper(args.db)
+    transaction_kw = {}
+    if args.fields:
+        transaction_kw = {'fields': args.fields}
+    data = ck.get_transactions(**transaction_kw)
+
+    if args.target:
+        for target in args.target:
+            ck.export(data, target)
+    else:
+        ck.export(data)
