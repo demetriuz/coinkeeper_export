@@ -34,12 +34,20 @@ class Exporter(object):
         if not data:
             return
         fields = data[0].keys()
+
         with open(path, 'wb') as f:
+            # Write titles
+            writer = csv.writer(f)
+            writer.writerow(fields)
+
             writer = csv.DictWriter(f, fields)
             for row in data:
                 for k,v in row.items():
+                    #print type(v)
                     if isinstance(v, unicode):
                         row[k] = v.encode('utf8')
+                    if isinstance(v, float):
+                        row[k] = '{0}'.format(v).replace('.', ',')
                 writer.writerow(row)
 
 
@@ -54,7 +62,7 @@ class CoinKeeper(object):
         else:
             self.exporter = Exporter
 
-    def get_transactions(self, fields=['Note', 'Name', 'DefaultAmount', 'Icon', 'Date'], order_by='date'):
+    def get_transactions(self, fields=['Name', 'Note', 'DefaultAmount', 'Icon', 'Date'], order_by='date'):
         fields = ','.join(fields)
         sql = """
             SELECT
