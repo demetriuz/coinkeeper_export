@@ -3,6 +3,7 @@ import argparse
 import sqlite3
 import csv
 from datetime import datetime
+import tempfile
 import os
 from itertools import groupby
 
@@ -108,7 +109,11 @@ class CoinKeeper(object):
         return list(self.cursor.execute(sql))
 
     def export(self, fields=None, path=None):
-        data = self.get_transactions(fields)
+        try:
+            data = self.get_transactions(fields)
+        finally:
+            self.connection.close()
+
         if self.grouper:
             grouper = self.grouper(data)
             data = grouper.group()
@@ -121,15 +126,31 @@ class CoinKeeper(object):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Coin keeper (http://coinkeeper.me/) database export tool')
-    parser.add_argument('-d', '--db', type=str, help='database path', default='CoinKeeper2.db3')
     parser.add_argument('-f', '--fields', type=str, help='fields from database to be extracted', nargs='*', default=['Date', 'Name', 'DefaultAmount', 'Note', 'Icon'])
     parser.add_argument('-t', '--target', type=str, help='target file(s)', nargs='*', default=None)
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('-d', '--db', type=str, help='database path', default='CoinKeeper2.db3')
+    group.add_argument('--ios', type=bool, const=True, nargs='?')
+
     args = parser.parse_args()
 
-    ck = CoinKeeper(args.db)
+    def do_export(ck, args):
+        if args.target:
+            for target in args.target:
+                ck.export(target, fields=args.fields)
+        else:
+            ck.export(fields=args.fields)
 
-    if args.target:
-        for target in args.target:
-            ck.export(target, fields=args.fields)
+    if args.ios:
+        from iconnector import ifuse_connect, ifuse_disconnect
+        mnt_path = tempfile.mkdtemp()
+        db_path = os.path.join(mnt_path, 'CoinKeeper2.db3')
+        try:
+            ifuse_connect(mnt_path=mnt_path, app_id='com.i-free.coinkeeper')
+            ck = CoinKeeper(db_path)
+            do_export(ck, args)
+        finally:
+            ifuse_disconnect(mnt_path)
     else:
-        ck.export(fields=args.fields)
+        ck = CoinKeeper(args.db)
+        do_export(ck, args)
